@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -32,23 +33,16 @@ func main() {
 	}
 	defer func() {
 		if err = client.Disconnect(context.TODO()); err != nil {
-			fmt.Println("Heello")
 			log.Fatal(err)
 		}
 	}()
 
-	fmt.Println("Heello1")
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	fmt.Println("Heello2")
 	err = client.Ping(ctx, readpref.Primary())
-	fmt.Println("Heello3")
 	if err != nil {
-		fmt.Println("Heello4")
 		log.Fatal(err)
 	}
-
-	fmt.Println("Heello5")
 
 	collection := client.Database("vault").Collection("coubs")
 
@@ -57,7 +51,22 @@ func main() {
 	for i := page; i < totalPages; i++ {
 		page, totalPages, data = getPage(i)
 		fmt.Println(i, page, totalPages)
-		res, err := collection.InsertOne(context.TODO(), data)
+
+		var batch []mongo.WriteModel
+
+		for _, v := range data {
+			entry1 := v.(map[string]interface{})
+			entryId := entry1["id"].(float64)
+			entry := mongo.NewUpdateOneModel().SetFilter(bson.D{{"id", entryId}}).SetUpdate(bson.D{{"$set", entry1}}).SetUpsert(true)
+
+			batch = append(batch, entry)
+		}
+
+		opts := options.BulkWrite().SetOrdered(false)
+		res, err := collection.BulkWrite(context.TODO(), batch, opts)
+		//filter := bson.D{{"address.market", "Sydney"}}
+		//update := bson.D{{"$mul", bson.D{{"price", 1.15}}}}
+		//res, err := collection.InsertMany(context.TODO(), data)
 		if err != nil {
 			log.Fatal("can't insert", err)
 		} else {
@@ -66,7 +75,7 @@ func main() {
 	}
 }
 
-func getPage(nextPage int) (page, totalPages int, data map[string]interface{}) {
+func getPage(nextPage int) (page, totalPages int, data []interface{}) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		log.Fatal("Got error while creating cookie jar")
@@ -117,11 +126,13 @@ func getPage(nextPage int) (page, totalPages int, data map[string]interface{}) {
 	}
 }
 
-func parseBody(content []byte) (page, totalPages int, data map[string]interface{}) {
+func parseBody(content []byte) (page, totalPages int, coubs []interface{}) {
+	var data map[string]interface{}
 	json.Unmarshal(content, &data)
 
 	page = int(data["page"].(float64))
 	totalPages = int(data["total_pages"].(float64))
+	coubs = data["coubs"].([]interface{})
 
 	return
 }
